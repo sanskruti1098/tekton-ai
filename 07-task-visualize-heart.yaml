@@ -1,0 +1,40 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: visualize-heart-results
+spec:
+  description: "Render confusion matrices from metrics.json with matplotlib"
+  params:
+    - name: python_image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+  workspaces:
+    - name: shared
+  steps:
+    - name: visualize
+      image: $(params.python_image)
+      workingDir: /workspace/shared
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "[viz] Start"
+        test -f metrics.json || { echo "[viz] metrics.json missing"; cat . || true; exit 1; }
+        python3 -m ensurepip || true
+        pip install --no-cache-dir -q matplotlib
+        P=/workspace/shared/viz.py
+        rm -f "$P"; touch "$P"
+        echo "import json, matplotlib.pyplot as plt" >> "$P"
+        echo "m=json.load(open('metrics.json'))" >> "$P"
+        echo "knn=m['confusion_matrices']['knn']; mlp=m['confusion_matrices']['mlp']" >> "$P"
+        echo "def draw(cm,title,fname):" >> "$P"
+        echo "    plt.figure(figsize=(4,4)); plt.imshow(cm, cmap='Blues');" >> "$P"
+        echo "    plt.title(title); plt.xlabel('Predicted'); plt.ylabel('Actual');" >> "$P"
+        echo "    for i in range(len(cm)):" >> "$P"
+        echo "        for j in range(len(cm[0])):" >> "$P"
+        echo "            plt.text(j,i,cm[i][j],ha='center',va='center')" >> "$P"
+        echo "    plt.tight_layout(); plt.savefig(fname)" >> "$P"
+        echo "draw(knn,'k-NN Confusion','confusion_matrix_knn.png')" >> "$P"
+        echo "draw(mlp,'MLP Confusion','confusion_matrix_mlp.png')" >> "$P"
+        echo "print('saved confusion_matrix_knn.png and confusion_matrix_mlp.png')" >> "$P"
+        python3 "$P"
+        echo "[viz] Done"

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heart-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: heart-ui }
+  template:
+    metadata:
+      labels: { app: heart-ui }
+    spec:
+      volumes:
+        - name: ws
+          persistentVolumeClaim:
+            claimName: tekton-heart-workspace
+        - name: app-src
+          configMap:
+            name: heart-ui
+      containers:
+        - name: ui
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - { name: ws, mountPath: /mnt/ws }
+            - { name: app-src, mountPath: /opt/app }
+          workingDir: /opt/app
+          command: ["/bin/bash","-c"]
+          args:
+            - |
+              python3 -m ensurepip || true
+              pip install --no-cache-dir -q flask
+              python3 app.py
+          env:
+            - { name: PVC_PATH, value: /mnt/ws }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: heart-ui
+spec:
+  selector: { app: heart-ui }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: heart-ui
+spec:
+  to:
+    kind: Service
+    name: heart-ui
+  port:
+    targetPort: http

@@ -1,0 +1,29 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: visualize-heart-results
+spec:
+  description: "Visualize or print model performance metrics from metrics.json"
+  params:
+    - name: python_image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+  workspaces:
+    - name: shared
+  steps:
+    - name: visualize
+      image: $(params.python_image)
+      workingDir: /workspace/shared
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "[visualize] Start"
+        if [ ! -f metrics.json ]; then
+          echo "[visualize] metrics.json not found!"
+          exit 1
+        fi
+
+        echo "[visualize] ==== METRICS REPORT ===="
+        cat metrics.json | python3 -m json.tool || cat metrics.json
+        echo "[visualize] ========================"
+        echo "[visualize] Done"

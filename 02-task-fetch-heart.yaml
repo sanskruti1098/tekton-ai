@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: fetch-heart-dataset
+spec:
+  description: "Download UCI Heart Disease (Cleveland) CSV to the shared workspace"
+  params:
+    - name: dataset_url
+      type: string
+      default: "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"
+    - name: python_image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+  workspaces:
+    - name: shared
+  steps:
+    - name: download
+      image: $(params.python_image)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "[fetch] Start"
+        echo "[fetch] URL: $(params.dataset_url)"
+        mkdir -p /workspace/shared
+        curl -fsSL "$(params.dataset_url)" -o /workspace/shared/heart.csv
+        echo "[fetch] Saved to /workspace/shared/heart.csv"
+        echo "[fetch] First 5 lines:"
+        head -n 5 /workspace/shared/heart.csv || true
+        echo "[fetch] File size:"
+        ls -lh /workspace/shared/heart.csv
+        echo "[fetch] Done"

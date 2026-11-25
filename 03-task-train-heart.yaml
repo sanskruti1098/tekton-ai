@@ -1,0 +1,73 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: train-heart-model
+spec:
+  description: "Clean, normalize and split UCI heart dataset into train/test JSON"
+  params:
+    - name: python_image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+    - name: train_ratio
+      type: string
+      default: "0.8"
+  workspaces:
+    - name: shared
+  steps:
+    - name: train
+      image: $(params.python_image)
+      workingDir: /workspace/shared
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "[train] Start"
+        test -f heart.csv || { echo "[train] heart.csv not found"; exit 1; }
+
+        P=/workspace/shared/train.py
+        rm -f "$P"; touch "$P"
+
+        echo "import json, random, os" >> "$P"
+        echo "" >> "$P"
+        echo "def load(path):" >> "$P"
+        echo "    X, y = [], []" >> "$P"
+        echo "    with open(path) as f:" >> "$P"
+        echo "        for line in f:" >> "$P"
+        echo "            row = line.strip().split(',')" >> "$P"
+        echo "            if len(row) < 14: continue" >> "$P"
+        echo "            if '?' in row: continue" >> "$P"
+        echo "            # 13 features then diagnosis (0..4). Convert >0 to 1 (disease) else 0" >> "$P"
+        echo "            feats = list(map(float, row[:13]))" >> "$P"
+        echo "            label = 1 if int(float(row[13])) > 0 else 0" >> "$P"
+        echo "            X.append(feats); y.append(label)" >> "$P"
+        echo "    return X, y" >> "$P"
+        echo "" >> "$P"
+        echo "def normalize(X):" >> "$P"
+        echo "    cols = list(zip(*X))" >> "$P"
+        echo "    mins = [min(c) for c in cols]" >> "$P"
+        echo "    maxs = [max(c) for c in cols]" >> "$P"
+        echo "    out = []" >> "$P"
+        echo "    for v in X:" >> "$P"
+        echo "        out.append([(v[i]-mins[i])/(maxs[i]-mins[i] + 1e-9) for i in range(len(v))])" >> "$P"
+        echo "    return out" >> "$P"
+        echo "" >> "$P"
+        echo "def split(X, y, ratio):" >> "$P"
+        echo "    idx = list(range(len(X)))" >> "$P"
+        echo "    random.seed(42); random.shuffle(idx)" >> "$P"
+        echo "    cut = int(ratio * len(idx))" >> "$P"
+        echo "    train = [{'x': X[i], 'y': int(y[i])} for i in idx[:cut]]" >> "$P"
+        echo "    test  = [{'x': X[i], 'y': int(y[i])} for i in idx[cut:]]" >> "$P"
+        echo "    return train, test" >> "$P"
+        echo "" >> "$P"
+        echo "X, y = load('heart.csv')" >> "$P"
+        echo "print(f'[train] Rows loaded: {len(X)}')" >> "$P"
+        echo "Xn = normalize(X)" >> "$P"
+        echo "r = float(os.environ.get('TRAIN_RATIO','0.8'))" >> "$P"
+        echo "train, test = split(Xn, y, r)" >> "$P"
+        echo "import os as _os; _os.makedirs('data', exist_ok=True)" >> "$P"
+        echo "import json as _json" >> "$P"
+        echo "_json.dump(train, open('data/train.json','w'))" >> "$P"
+        echo "_json.dump(test, open('data/test.json','w'))" >> "$P"
+        echo "print(f'[train] Wrote data/train.json ({len(train)}), data/test.json ({len(test)})')" >> "$P"
+
+        python3 "$P"
+        echo "[train] Done"

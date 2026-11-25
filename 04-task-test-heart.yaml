@@ -1,0 +1,120 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: test-heart-model
+spec:
+  description: "Evaluate pure-Python k-NN and a tiny one-hidden-layer MLP; write metrics.json"
+  params:
+    - name: python_image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+    - name: k
+      type: string
+      default: "5"
+  workspaces:
+    - name: shared
+  steps:
+    - name: test
+      image: $(params.python_image)
+      workingDir: /workspace/shared
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "[test] Start"
+        test -f data/train.json || { echo "[test] data/train.json missing"; exit 1; }
+        test -f data/test.json  || { echo "[test] data/test.json missing"; exit 1; }
+
+        P=/workspace/shared/test.py
+        rm -f "$P"; touch "$P"
+
+        echo "import json, math, random, os" >> "$P"
+        echo "def load_split(name):" >> "$P"
+        echo "    d = json.load(open('data/'+name+'.json'))" >> "$P"
+        echo "    X = [r['x'] for r in d]; y = [int(r['y']) for r in d]" >> "$P"
+        echo "    return X, y" >> "$P"
+        echo "def euclid(a,b):" >> "$P"
+        echo "    s=0.0" >> "$P"
+        echo "    for i in range(len(a)):" >> "$P"
+        echo "        v=a[i]-b[i]; s+=v*v" >> "$P"
+        echo "    return s**0.5" >> "$P"
+        echo "def knn_predict(trainX, trainy, x, k):" >> "$P"
+        echo "    d=[(euclid(x, tx), i) for i,tx in enumerate(trainX)]" >> "$P"
+        echo "    d.sort(key=lambda t:t[0])" >> "$P"
+        echo "    votes={}" >> "$P"
+        echo "    for _,i in d[:k]: votes[trainy[i]]=votes.get(trainy[i],0)+1" >> "$P"
+        echo "    return max(votes.items(), key=lambda t:t[1])[0]" >> "$P"
+        echo "def sigmoid(z):" >> "$P"
+        echo "    if z<-60: return 0.0" >> "$P"
+        echo "    if z>60: return 1.0" >> "$P"
+        echo "    return 1.0/(1.0+math.exp(-z))" >> "$P"
+        echo "def dsigmoid(a): return a*(1.0-a)" >> "$P"
+        echo "def tanh(x): return math.tanh(x)" >> "$P"
+        echo "def dtanh(a): return 1.0 - a*a" >> "$P"
+        echo "def mlp_train_predict(trainX, trainy, testX, hidden=12, epochs=150, lr=0.01):" >> "$P"
+        echo "    random.seed(42)" >> "$P"
+        echo "    d=len(trainX[0])" >> "$P"
+        echo "    w1=[[random.random()*0.02-0.01 for _ in range(d)] for _ in range(hidden)]" >> "$P"
+        echo "    b1=[random.random()*0.02-0.01 for _ in range(hidden)]" >> "$P"
+        echo "    w2=[random.random()*0.02-0.01 for _ in range(hidden)]" >> "$P"
+        echo "    b2=random.random()*0.02-0.01" >> "$P"
+        echo "    idx=list(range(len(trainX)))" >> "$P"
+        echo "    for ep in range(epochs):" >> "$P"
+        echo "        random.shuffle(idx)" >> "$P"
+        echo "        for ii in idx:" >> "$P"
+        echo "            x=trainX[ii]; y=float(trainy[ii])" >> "$P"
+        echo "            h=[]; z1=[]" >> "$P"
+        echo "            for i in range(hidden):" >> "$P"
+        echo "                s=b1[i]" >> "$P"
+        echo "                for j in range(d): s+=w1[i][j]*x[j]" >> "$P"
+        echo "                z1.append(s); h.append(tanh(s))" >> "$P"
+        echo "            z2=b2" >> "$P"
+        echo "            for i in range(hidden): z2+=w2[i]*h[i]" >> "$P"
+        echo "            o=sigmoid(z2)" >> "$P"
+        echo "            diff=o-y; dz2=diff*dsigmoid(o)" >> "$P"
+        echo "            for i in range(hidden): w2[i]-=lr*dz2*h[i]" >> "$P"
+        echo "            b2-=lr*dz2" >> "$P"
+        echo "            for i in range(hidden):" >> "$P"
+        echo "                dz1=(w2[i]*dz2)*dtanh(h[i])" >> "$P"
+        echo "                for j in range(d): w1[i][j]-=lr*dz1*x[j]" >> "$P"
+        echo "                b1[i]-=lr*dz1" >> "$P"
+        echo "    preds=[]" >> "$P"
+        echo "    for x in testX:" >> "$P"
+        echo "        h=[]" >> "$P"
+        echo "        for i in range(hidden):" >> "$P"
+        echo "            s=b1[i]" >> "$P"
+        echo "            for j in range(d): s+=w1[i][j]*x[j]" >> "$P"
+        echo "            h.append(tanh(s))" >> "$P"
+        echo "        z2=b2" >> "$P"
+        echo "        for i in range(hidden): z2+=w2[i]*h[i]" >> "$P"
+        echo "        o=sigmoid(z2)" >> "$P"
+        echo "        preds.append(1 if o>=0.5 else 0)" >> "$P"
+        echo "    return preds" >> "$P"
+        echo "def confusion(y_true, y_pred):" >> "$P"
+        echo "    cm=[[0,0],[0,0]]" >> "$P"
+        echo "    for t,p in zip(y_true,y_pred): cm[int(t)][int(p)]+=1" >> "$P"
+        echo "    return cm" >> "$P"
+        echo "def metrics_from_cm(cm):" >> "$P"
+        echo "    total=sum(sum(r) for r in cm)" >> "$P"
+        echo "    acc=(cm[0][0]+cm[1][1])/total if total else 0.0" >> "$P"
+        echo "    prec0=cm[0][0]/(cm[0][0]+cm[1][0]) if (cm[0][0]+cm[1][0])>0 else 0.0" >> "$P"
+        echo "    prec1=cm[1][1]/(cm[1][1]+cm[0][1]) if (cm[1][1]+cm[0][1])>0 else 0.0" >> "$P"
+        echo "    rec0=cm[0][0]/(cm[0][0]+cm[0][1]) if (cm[0][0]+cm[0][1])>0 else 0.0" >> "$P"
+        echo "    rec1=cm[1][1]/(cm[1][1]+cm[1][0]) if (cm[1][1]+cm[1][0])>0 else 0.0" >> "$P"
+        echo "    f10=(2*prec0*rec0)/(prec0+rec0) if (prec0+rec0)>0 else 0.0" >> "$P"
+        echo "    f11=(2*prec1*rec1)/(prec1+rec1) if (prec1+rec1)>0 else 0.0" >> "$P"
+        echo "    return {'accuracy':acc,'precision':(prec0+prec1)/2,'recall':(rec0+rec1)/2,'f1':(f10+f11)/2}" >> "$P"
+        echo "def main():" >> "$P"
+        echo "    trainX, trainy = load_split('train'); testX, testy = load_split('test')" >> "$P"
+        echo "    K = int(os.environ.get('K','5'))" >> "$P"
+        echo "    preds_knn = [knn_predict(trainX, trainy, x, K) for x in testX]" >> "$P"
+        echo "    cm_knn = confusion(testy, preds_knn); m_knn = metrics_from_cm(cm_knn)" >> "$P"
+        echo "    preds_mlp = mlp_train_predict(trainX, trainy, testX, hidden=16, epochs=200, lr=0.01)" >> "$P"
+        echo "    cm_mlp = confusion(testy, preds_mlp); m_mlp = metrics_from_cm(cm_mlp)" >> "$P"
+        echo "    out={'all': {'knn': m_knn, 'mlp': m_mlp}, 'confusion_matrices': {'knn': cm_knn, 'mlp': cm_mlp}}" >> "$P"
+        echo "    json.dump(out, open('metrics.json','w'))" >> "$P"
+        echo "    print('[test] metrics.json written')" >> "$P"
+        echo "if __name__=='__main__': main()" >> "$P"
+
+        export K="$(params.k)"
+        python3 "$P"
+        echo "[test] Done"

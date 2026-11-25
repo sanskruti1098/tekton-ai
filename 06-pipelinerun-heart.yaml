@@ -1,0 +1,20 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: heart-uci-ml-run-001
+spec:
+  pipelineRef:
+    name: heart-uci-ml-pipeline
+  params:
+    - name: dataset_url
+      value: "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"
+    - name: py_image
+      value: "registry.access.redhat.com/ubi9/python-311:latest"
+    - name: k
+      value: "5"
+    - name: train_ratio
+      value: "0.8"
+  workspaces:
+    - name: shared
+      persistentVolumeClaim:
+        claimName: tekton-heart-workspace

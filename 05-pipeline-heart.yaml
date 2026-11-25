@@ -1,0 +1,59 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: heart-uci-ml-pipeline
+spec:
+  description: "Fetch UCI Heart dataset -> train split -> test two models -> visualize"
+  params:
+    - name: dataset_url
+      default: "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"
+    - name: py_image
+      default: "registry.access.redhat.com/ubi9/python-311:latest"
+    - name: k
+      default: "5"
+    - name: train_ratio
+      default: "0.8"
+  workspaces:
+    - name: shared
+  tasks:
+    - name: fetch
+      taskRef: { name: fetch-heart-dataset }
+      params:
+        - name: dataset_url
+          value: $(params.dataset_url)
+        - name: python_image
+          value: $(params.py_image)
+      workspaces:
+        - name: shared
+          workspace: shared
+    - name: train
+      runAfter: [fetch]
+      taskRef: { name: train-heart-model }
+      params:
+        - name: python_image
+          value: $(params.py_image)
+        - name: train_ratio
+          value: $(params.train_ratio)
+      workspaces:
+        - name: shared
+          workspace: shared
+    - name: test
+      runAfter: [train]
+      taskRef: { name: test-heart-model }
+      params:
+        - name: python_image
+          value: $(params.py_image)
+        - name: k
+          value: $(params.k)
+      workspaces:
+        - name: shared
+          workspace: shared
+    - name: visualize
+      runAfter: [test]
+      taskRef: { name: visualize-heart-results }
+      params:
+        - name: python_image
+          value: $(params.py_image)
+      workspaces:
+        - name: shared
+          workspace: shared

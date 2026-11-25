@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-ml
+spec:
+  restartPolicy: Never
+  volumes:
+    - name: ws
+      persistentVolumeClaim:
+        claimName: tekton-heart-workspace
+  containers:
+    - name: debug
+      image: registry.access.redhat.com/ubi9/python-311
+      command: ["/bin/bash", "-c", "--"]
+      args: ["sleep 3600"]
+      volumeMounts:
+        - name: ws
+          mountPath: /mnt/ws
